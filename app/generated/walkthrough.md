@@ -1,21 +1,48 @@
-# MP3ビジュアライザー 実装完了
+# Walkman NW-Z1000 Visualizer Themes Reproduction
 
-ウォークマン NW-Z1000シリーズのビジュアライザーからインスパイアされた、WebベースのMP3ビジュアライザーの実装が完了しました。
+The visualizer app has been fully updated to support modern Web APIs implementing logic inspired by the 12-Tone Analysis Walkman visualizers.
 
-## 実装機能
-- **ドラッグ＆ドロップ対応**: ローカルのMP3ファイルを画面内にドロップするだけで、プレイリストへ追加・解析が行われます。
-- **ID3タグ連携**: `jsmediatags`を使用し、楽曲名、アーティスト名、カバーアートプレビュー表示に対応しています。
-- **8種類のテーマ**: 波形、スペクトルバー、サークルEQ、レコード風、カセットテープ、パーティクル、オーブ、タイポグラフィの8つのテーマを切り替え可能です。
-- **再生モード**: 全曲ループ、1曲ループ、シャッフル再生を含めたコントロール UI を備えています。
+## Completed Features
+- **Preparation & Refactoring:**
+  - Integrated `Three.js` for 3D rendering.
+  - Extracted fast Fourier transform (`analyser.getByteFrequencyData`) into specific frequency bands (bass, mid, treble) for accurate beat detection.
+  - Implemented an extensible, multi-layer rendering orchestration (`Canvas2D`, `Three.js`, and `DOM CSS3D`).
 
-## 画面イメージ
-![Initial Load](C:\Users\y\.gemini\antigravity\brain\bfe0fce4-33c4-4c80-8520-c372b045e0be\mp3_visualizer_initial_load_1773027324326.png)
-*(自動テストによって撮影された初期表示状態の画像)*
+- **Theme 1: Gate** (`Three.js`)
+  - Displays a warp tunnel with geometric shapes navigating forward.
+  - Camera FOV pulses to simulate intense screen shake upon detecting strong kick drum/bass hits.
 
-## 検証と使用方法
-現在はディレクトリ内で静的ファイル（HTML/CSS/JS）として構築されています。
-1. [app/index.html](file:///c:/Users/y/Documents/GitHub/Antigravity-JS-NWZ1000-Visualizer/app/index.html)をブラウザで開くか、ローカルサーバー経由（例: `http://localhost:8081`）でアクセスします。
-2. 画面内に手元のMP3ファイルをドラッグ＆ドロップすると、右側のプレイリストに追加されます。
-3. プレイリスト内の曲をクリック、または下部の再生ボタンを押すと音楽が再生され、ビジュアライザーが動作し始めます。
-4. 画面上部のセレクトボックスからテーマ（1〜8）を切り替えて、ビジュアルの変化を確認できます。
-5. GitHub Pages等にそのままデプロイして使用することが可能です。
+- **Theme 2: Balloon** (`Canvas 2D`)
+  - Colored orbs bounce realistically using a simple 2D collision physics engine.
+  - Bass impacts gravity and treble creates trembling/vibration effects on individual balloons.
+
+- **Theme 3: Glow** (`Canvas 2D`)
+  - Smooth sine wave fluid lines drawn with screen-blending additions.
+  - Modulates color palette organically based on the dominant frequency spectrum ratios.
+
+- **Theme 4: Animal** (`Canvas 2D`)
+  - Draws dynamic grassy plain silhouettes. 
+  - A deer jumps in sync with strong rhythmic beats, and flocks of birds scatter across the screen during energetic crescendos.
+
+- **Theme 5: Albums** (`CSS 3D Transforms`)
+  - Places loaded playlist cover arts within a 3D perspective circle slowly revolving around the current track's artwork.
+  - Uses CSS filters to generate dropping shadows and scaling that reacts live to audio amplitude.
+
+- **Theme 6: Graffiti** (`Canvas 2D Particle System`)
+  - Splash particles are spawned rapidly on snare drops.
+  - Splats drip downwards imitating wet ink; drip speed accelerates on heavy hits.
+
+- **Theme 7: Ink** (`Canvas 2D + SVG Gooey Filter`)
+  - Features organic color droplet explosions that blur and combine like liquid metaballs.
+  - Circles swirl outwards from the center on heavy drops.
+
+- **Theme 8: Random** (`Auto-Switcher Lifecycle`)
+  - Routinely selects between Themes 1-7.
+  - Will preemptively drop into a new visualizer theme if a massive drop in bass energy is detected (e.g., entering a chorus).
+
+## How to Verify
+1. Open up [index.html](file:///c:/Users/y/Documents/GitHub/Antigravity-JS-NWZ1000-Visualizer/app/index.html) in a modern browser (e.g. Chrome, Edge).
+   - *Note:* If you run into strict CORS issues with `Three.js` importing local files directly via `file://`, simply start a local static server like `npx http-server .` in the app directory and open `http://localhost:8080`.
+2. Drag and drop a few `.mp3` files (with embedded cover art, if possible) onto the page.
+3. Click play. Ensure your speakers are on, and use the top dropdown menu to cycle through all 8 themes. 
+4. Select [Random](file:///c:/Users/y/Documents/GitHub/Antigravity-JS-NWZ1000-Visualizer/app/app.js#1192-1216) mode to test the automatic theme transition logic!

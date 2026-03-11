@@ -151,13 +151,19 @@ body {
     align-items: center;
 }
 
-#visualizer-canvas {
+#visualizer-canvas, #visualizer-three, #visualizer-dom {
     width: 100%;
     height: 100%;
     position: absolute;
     top: 0;
     left: 0;
     z-index: 2;
+}
+
+#visualizer-dom {
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }
 
 .bg-artwork {

@@ -12,6 +12,8 @@ let currentIndex = -1;
 let isPlaying = false;
 let currentTheme = '1';
 let animationId = null;
+let currentThemeObj = null;
+const themes = {};
 
 // Playback modes
 let repeatMode = 'normal'; // 'normal', 'repeat-all', 'repeat-one'
@@ -48,9 +50,11 @@ const dom = {
     currentCover: document.getElementById('current-cover'),
     bgArtwork: document.getElementById('bg-artwork'),
     
-    // Canvas
+    // Visualizer Layers
     canvas: document.getElementById('visualizer-canvas'),
     ctx: document.getElementById('visualizer-canvas').getContext('2d'),
+    canvasThree: document.getElementById('visualizer-three'),
+    layerDom: document.getElementById('visualizer-dom'),
     
     // Toast
     toastContainer: document.getElementById('toast-container')
@@ -61,6 +65,11 @@ function init() {
     setupEventListeners();
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
+    
+    // Auto-init theme 1 on boot
+    setTimeout(() => {
+        switchTheme('1');
+    }, 100);
 }
 
 function initAudioContext() {
@@ -109,7 +118,7 @@ function setupEventListeners() {
 
     // Theme selector
     dom.themeSelector.addEventListener('change', (e) => {
-        currentTheme = e.target.value;
+        switchTheme(e.target.value);
     });
 
     // Player Controls
@@ -489,408 +498,748 @@ function resizeCanvas() {
     const rect = dom.canvas.parentElement.getBoundingClientRect();
     dom.canvas.width = rect.width;
     dom.canvas.height = rect.height;
+    
+    if (currentThemeObj && currentThemeObj.resize) {
+        currentThemeObj.resize(rect.width, rect.height);
+    }
 }
 
-// Variables for theming engines
-let particlesArray = [];
-let rotationAngle = 0;
+function switchTheme(themeId) {
+    if (currentThemeObj && currentThemeObj.destroy) {
+        currentThemeObj.destroy();
+    }
+    
+    currentTheme = themeId;
+    dom.themeSelector.value = themeId;
+    currentThemeObj = themes[themeId];
+    
+    // Hide all layers
+    dom.canvas.style.display = 'none';
+    dom.canvasThree.style.display = 'none';
+    dom.layerDom.style.display = 'none';
+    dom.layerDom.innerHTML = ''; // clear DOM
+    
+    if (!currentThemeObj) return;
+    
+    if (currentThemeObj.layer === 'three') {
+        dom.canvasThree.style.display = 'block';
+    } else if (currentThemeObj.layer === 'dom') {
+        dom.layerDom.style.display = 'flex';
+    } else {
+        dom.canvas.style.display = 'block';
+    }
+    
+    if (currentThemeObj.init) {
+        const rect = dom.canvas.parentElement.getBoundingClientRect();
+        currentThemeObj.init(rect.width, rect.height);
+    }
+}
 
 function drawVisualizer() {
     if (!analyser) return;
     
-    // Schedule next frame immediately
+    // Schedule next frame
     animationId = requestAnimationFrame(drawVisualizer);
+    
+    if (!isPlaying) {
+        // Continue drawing frame so effects can decay, but dont advance logic much
+        // For some themes, we might want idle animations
+    }
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    analyser.getByteFrequencyData(dataArray);
+    
+    const timeData = new Uint8Array(bufferLength);
+    analyser.getByteTimeDomainData(timeData);
+    
+    // Extract Audio Features
+    let bassSum = 0;
+    for (let i = 0; i < 10; i++) bassSum += dataArray[i];
+    const bass = bassSum / 10;
+    
+    let midSum = 0;
+    for (let i = 10; i < 100; i++) midSum += dataArray[i];
+    const mid = midSum / 90;
+    
+    let trebleSum = 0;
+    for (let i = 100; i < 250; i++) trebleSum += dataArray[i];
+    const treble = trebleSum / 150;
+    
+    const audioData = {
+        bufferLength,
+        dataArray,
+        timeData,
+        bass,
+        mid,
+        treble
+    };
     
     const cw = dom.canvas.width;
     const ch = dom.canvas.height;
-    const ctx = dom.ctx;
     
-    // Buffer for Frequency Data
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    
-    // Default semi-transparent fade
-    ctx.fillStyle = "rgba(0,0,0,0.2)";
-    ctx.fillRect(0, 0, cw, ch);
-    
-    if (!isPlaying) {
-        // Keep idle drawing smoothly
-        return;
-    }
-
-    analyser.getByteFrequencyData(dataArray);
-
-    switch (currentTheme) {
-        case '1': drawWaveform(ctx, cw, ch); break;
-        case '2': drawSpectrumBars(ctx, cw, ch, dataArray, bufferLength); break;
-        case '3': drawCircleEQ(ctx, cw, ch, dataArray, bufferLength); break;
-        case '4': drawVinyl(ctx, cw, ch, dataArray); break;
-        case '5': drawCassette(ctx, cw, ch, dataArray); break;
-        case '6': drawParticles(ctx, cw, ch, dataArray, bufferLength); break;
-        case '7': drawFloatingOrbs(ctx, cw, ch, dataArray, bufferLength); break;
-        case '8': drawTypography(ctx, cw, ch, dataArray); break;
-        default: drawSpectrumBars(ctx, cw, ch, dataArray, bufferLength);
+    if (currentThemeObj && currentThemeObj.update) {
+        currentThemeObj.update(audioData, cw, ch);
     }
 }
 
-// Theme 1: Waveform
-function drawWaveform(ctx, cw, ch) {
-    const timeData = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteTimeDomainData(timeData);
-    
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fillRect(0, 0, cw, ch);
-    
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = '#00d2ff';
-    ctx.beginPath();
-    
-    const sliceWidth = cw * 1.0 / analyser.frequencyBinCount;
-    let x = 0;
-    
-    for (let i = 0; i < analyser.frequencyBinCount; i++) {
-        const v = timeData[i] / 128.0; // 0 to 2
-        const y = v * ch / 2;
+// --- Themes Implementation ---
+
+// Theme 1: Gate (Three.js Warp Tunnel)
+themes['1'] = {
+    layer: 'three',
+    scene: null,
+    camera: null,
+    renderer: null,
+    geometry: null,
+    material: null,
+    points: null,
+    baseFov: 75,
+    init: function(width, height) {
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(this.baseFov, width / height, 0.1, 1000);
+        this.camera.position.z = 0;
         
-        if (i === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
+        this.renderer = new THREE.WebGLRenderer({ canvas: dom.canvasThree, alpha: true, antialias: true });
+        this.renderer.setSize(width, height);
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        
+        // Create tunnel particles
+        this.geometry = new THREE.BufferGeometry();
+        const particlesCount = 2000;
+        const posArray = new Float32Array(particlesCount * 3);
+        
+        for(let i = 0; i < particlesCount * 3; i+=3) {
+            // cylindrical distribution around z-axis
+            const radius = 3 + Math.random() * 20;
+            const theta = Math.random() * Math.PI * 2;
+            posArray[i] = Math.cos(theta) * radius; // x
+            posArray[i+1] = Math.sin(theta) * radius; // y
+            posArray[i+2] = (Math.random() - 0.5) * 200; // z
         }
-        x += sliceWidth;
+        
+        this.geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        this.material = new THREE.PointsMaterial({
+            size: 0.15,
+            color: 0x00ffff,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+        
+        this.points = new THREE.Points(this.geometry, this.material);
+        this.scene.add(this.points);
+        
+        // Grid helper to look like Tron/Gate
+        const gridHelper = new THREE.GridHelper(50, 50, 0x00ffff, 0x004488);
+        gridHelper.position.y = -8;
+        this.scene.add(gridHelper);
+        this.grid = gridHelper;
+    },
+    update: function(audioData, cw, ch) {
+        if (!this.renderer) return;
+        
+        const isAudioActive = isPlaying && audioData.bass > 0;
+        
+        // Speed up tunnel on bass + general advancement
+        const speed = isAudioActive ? 0.3 + (audioData.bass / 255) * 3.0 : 0.1;
+        
+        // Move particles towards camera
+        const positions = this.geometry.attributes.position.array;
+        for(let i=2; i<positions.length; i+=3) {
+            positions[i] += speed;
+            if(positions[i] > 20) {
+                positions[i] -= 200; // wrap around deep back
+            }
+        }
+        this.geometry.attributes.position.needsUpdate = true;
+        
+        // Move grid to create illusion of forward movement
+        this.grid.position.z += speed;
+        if(this.grid.position.z > 1) {
+            this.grid.position.z -= 1; // loop
+        }
+        
+        // Kick effect: FOV pulse
+        const targetFov = this.baseFov + (audioData.bass / 255) * 40; // Max +40 FOV on heavy bass
+        this.camera.fov += (targetFov - this.camera.fov) * 0.15; // Smooth lerp
+        
+        // Camera shake on very high bass
+        if (audioData.bass > 200) {
+            const shake = (audioData.bass - 200) / 55 * 0.5;
+            this.camera.position.x = (Math.random() - 0.5) * shake;
+            this.camera.position.y = (Math.random() - 0.5) * shake;
+        } else {
+            this.camera.position.x += (0 - this.camera.position.x) * 0.1;
+            this.camera.position.y += (0 - this.camera.position.y) * 0.1;
+        }
+        
+        this.camera.updateProjectionMatrix();
+        this.renderer.render(this.scene, this.camera);
+    },
+    resize: function(width, height) {
+        if (!this.camera || !this.renderer) return;
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(width, height);
+    },
+    destroy: function() {
+        if (this.geometry) this.geometry.dispose();
+        if (this.material) this.material.dispose();
+        if (this.renderer) this.renderer.dispose();
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
     }
-    
-    ctx.lineTo(cw, ch / 2);
-    ctx.stroke();
-    
-    // Add glow
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = '#00d2ff';
-    ctx.stroke();
-    ctx.shadowBlur = 0; // reset
-}
+};
 
-// Theme 2: Spectrum Bars
-function drawSpectrumBars(ctx, cw, ch, dataArray, bufferLength) {
-    // Clear fully for this one
-    ctx.fillStyle = "#0a0a0d";
-    ctx.fillRect(0, 0, cw, ch);
-    
-    const barWidth = (cw / bufferLength) * 2.5; // only take lower frequencies mainly
-    let x = 0;
-    
-    const barsCount = Math.floor(cw / barWidth);
-    
-    for (let i = 0; i < barsCount; i++) {
-        const barHeight = (dataArray[i] / 255) * ch * 0.8;
-        
-        // Gradient color based on frequency
-        const hue = i * 2;
-        ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
-        
-        // Draw centered vertically
-        ctx.fillRect(x, ch - barHeight, barWidth - 2, barHeight);
-        
-        x += barWidth;
-    }
-}
-
-// Theme 3: Circle EQ
-function drawCircleEQ(ctx, cw, ch, dataArray, bufferLength) {
-    ctx.fillStyle = "rgba(0,0,0,0.3)";
-    ctx.fillRect(0, 0, cw, ch);
-
-    const centerX = cw / 2;
-    const centerY = ch / 2;
-    const radius = Math.min(cw, ch) * 0.2;
-    
-    // Get average bass
-    let bassAvg = 0;
-    for (let i=0; i<10; i++) bassAvg += dataArray[i];
-    bassAvg = bassAvg / 10;
-    const pulseOffset = (bassAvg / 255) * 50;
-
-    const barsCount = 120; // number of circumference bars
-    const step = (Math.PI * 2) / barsCount;
-
-    for (let i = 0; i < barsCount; i++) {
-        // Map i to index in dataArray (mirrored)
-        let index = Math.floor((i < barsCount/2 ? i : barsCount - i) * (bufferLength * 0.3 / (barsCount/2)));
-        const value = dataArray[index];
-        const barHeight = (value / 255) * (Math.min(cw, ch) * 0.3);
-
-        const angle = i * step - Math.PI/2;
-        
-        const startX = centerX + Math.cos(angle) * (radius + pulseOffset);
-        const startY = centerY + Math.sin(angle) * (radius + pulseOffset);
-        
-        const endX = centerX + Math.cos(angle) * (radius + pulseOffset + barHeight);
-        const endY = centerY + Math.sin(angle) * (radius + pulseOffset + barHeight);
-        
-        ctx.strokeStyle = `hsl(${(i * 360 / barsCount) + (rotationAngle * 10)}, 100%, 50%)`;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        ctx.lineTo(endX, endY);
-        ctx.stroke();
-    }
-    
-    rotationAngle += 0.005;
-}
-
-// Theme 4: Vinyl
-function drawVinyl(ctx, cw, ch, dataArray) {
-    ctx.fillStyle = "#121212";
-    ctx.fillRect(0, 0, cw, ch);
-    
-    const centerX = cw / 2;
-    const centerY = ch / 2;
-    
-    let bassAvg = dataArray[2] + dataArray[3] + dataArray[4];
-    const bump = (bassAvg / 765) * 10;
-    
-    const vinylRadius = Math.min(cw, ch) * 0.38 + bump;
-    
-    // Draw vinyl base
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, vinylRadius, 0, Math.PI * 2);
-    ctx.fillStyle = '#050505';
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#222';
-    
-    // Draw grooves
-    for (let i = 20; i < vinylRadius; i += 8) {
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, i, 0, Math.PI * 2);
-        ctx.stroke();
-    }
-    
-    // Draw Center label
-    ctx.save();
-    ctx.translate(centerX, centerY);
-    if(isPlaying) rotationAngle += 0.02;
-    ctx.rotate(rotationAngle);
-    
-    ctx.beginPath();
-    ctx.arc(0, 0, vinylRadius * 0.33, 0, Math.PI * 2);
-    ctx.fillStyle = '#ff3b30'; // Red label
-    ctx.fill();
-    
-    // Center hole
-    ctx.beginPath();
-    ctx.arc(0, 0, 8, 0, Math.PI * 2);
-    ctx.fillStyle = '#121212';
-    ctx.fill();
-    
-    ctx.restore();
-}
-
-// Theme 5: Cassette Tape
-function drawCassette(ctx, cw, ch, dataArray) {
-    ctx.fillStyle = "#222";
-    ctx.fillRect(0, 0, cw, ch);
-    
-    const width = Math.min(cw * 0.8, 600);
-    const height = width * 0.63; // standard cassette ratio
-    const x = (cw - width) / 2;
-    const y = (ch - height) / 2;
-    
-    // Base shape
-    ctx.fillStyle = "#d1d5db"; // light gray body
-    ctx.beginPath();
-    ctx.roundRect(x, y, width, height, 15);
-    ctx.fill();
-    
-    // Sticker
-    ctx.fillStyle = "#facc15"; // yellow sticker
-    ctx.beginPath();
-    ctx.roundRect(x + 20, y + 20, width - 40, height - 100, 10);
-    ctx.fill();
-    
-    // Center window
-    const winWidth = width * 0.6;
-    const winHeight = height * 0.25;
-    const winX = x + (width - winWidth)/2;
-    const winY = y + height * 0.4;
-    
-    ctx.fillStyle = "#111"; // dark glass
-    ctx.beginPath();
-    ctx.roundRect(winX, winY, winWidth, winHeight, 8);
-    ctx.fill();
-    
-    // Reels
-    const reelRadius = winHeight * 0.45;
-    const reelDist = winWidth * 0.3;
-    const leftReelX = centerX = winX + winWidth/2 - reelDist/2;
-    const rightReelX = winX + winWidth/2 + reelDist/2;
-    const reelY = winY + winHeight/2;
-    
-    // Animate reels based on music logic and data
-    let speed = isPlaying ? 0.05 + (dataArray[10]/255)*0.1 : 0;
-    rotationAngle += speed;
-    
-    drawReel(ctx, leftReelX, reelY, reelRadius, rotationAngle);
-    drawReel(ctx, rightReelX, reelY, reelRadius, rotationAngle);
-    
-    // Text drawing on cassette
-    ctx.fillStyle = "#333";
-    ctx.font = "bold 24px 'Outfit'";
-    ctx.fillText("MIX TAPE", x + 30, y + 50);
-}
-
-function drawReel(ctx, x, y, radius, rot) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(rot);
-    ctx.beginPath();
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "#fff";
-    ctx.fill();
-    
-    // Spokess
-    ctx.fillStyle = "#333";
-    for(let i=0; i<6; i++) {
-        ctx.rotate(Math.PI / 3);
-        ctx.beginPath();
-        ctx.arc(0, radius*0.6, radius*0.2, 0, Math.PI*2);
-        ctx.fill();
-    }
-    
-    ctx.beginPath();
-    ctx.arc(0, 0, radius*0.2, 0, Math.PI * 2);
-    ctx.fillStyle = "#333";
-    ctx.fill();
-    ctx.restore();
-}
-
-// Theme 6: Particles
-function drawParticles(ctx, cw, ch, dataArray, bufferLength) {
-    ctx.fillStyle = "rgba(0,0,10,0.4)";
-    ctx.fillRect(0, 0, cw, ch);
-    
-    let bass = dataArray[5] / 255; // 0 to 1
-    
-    // Create new particles
-    if (bass > 0.6 && particlesArray.length < 200) {
-        let count = Math.floor(bass * 5);
-        for(let i=0; i<count; i++) {
-            particlesArray.push({
-                x: cw/2,
-                y: ch/2,
-                vx: (Math.random() - 0.5) * 15 * bass,
-                vy: (Math.random() - 0.5) * 15 * bass,
-                size: Math.random() * 5 + 1 + (bass * 5),
-                life: 1,
-                color: `hsl(${Math.random() * 60 + 200}, 100%, 70%)` // blueish
+// Theme 2: Balloon (Canvas Physics)
+themes['2'] = {
+    layer: 'canvas',
+    balloons: [],
+    init: function(w, h) {
+        this.balloons = [];
+        const colors = ['#FF3B30', '#FF9500', '#FFCC00', '#4CD964', '#5AC8FA', '#007AFF', '#5856D6', '#FF2D55'];
+        for(let i = 0; i < 25; i++) {
+            this.balloons.push({
+                x: Math.random() * w,
+                y: Math.random() * h,
+                vx: (Math.random() - 0.5) * 4,
+                vy: (Math.random() - 0.5) * 4,
+                radius: 20 + Math.random() * 40,
+                color: colors[Math.floor(Math.random() * colors.length)],
+                vibrate: 0
             });
         }
-    }
-    
-    for (let i = 0; i < particlesArray.length; i++) {
-        let p = particlesArray[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life -= 0.02; // decay
+    },
+    update: function(audioData, cw, ch) {
+        const ctx = dom.ctx;
+        // Background
+        ctx.fillStyle = "#0a0a0c";
+        ctx.fillRect(0, 0, cw, ch);
         
-        if (p.life <= 0) {
-            particlesArray.splice(i, 1);
-            i--;
-            continue;
+        // Physics update
+        const bassForce = (audioData.bass > 180) ? (audioData.bass - 180) * 0.15 : 0;
+        const trebleVibe = (audioData.treble > 120) ? (audioData.treble - 120) * 0.05 : 0;
+        
+        for (let i = 0; i < this.balloons.length; i++) {
+            let b = this.balloons[i];
+            
+            // Float upwards slightly + bass push
+            b.vy -= 0.05 + (bassForce * 0.3);
+            
+            // Friction
+            b.vx *= 0.99;
+            b.vy *= 0.99;
+            
+            // Move
+            b.x += b.vx;
+            b.y += b.vy;
+            
+            // Walls
+            if (b.x < b.radius) { b.x = b.radius; b.vx *= -0.8; }
+            if (b.x > cw - b.radius) { b.x = cw - b.radius; b.vx *= -0.8; }
+            
+            // Floor/Ceil - balloons bounce on the ceiling and floor
+            if (b.y < b.radius) { b.y = b.radius; b.vy *= -0.8; }
+            if (b.y > ch - b.radius) { b.y = ch - b.radius; b.vy *= -0.8; }
+            
+            // Tremble
+            b.vibrate = trebleVibe;
+            
+            // Collisions
+            for (let j = i + 1; j < this.balloons.length; j++) {
+                let b2 = this.balloons[j];
+                const dx = b2.x - b.x;
+                const dy = b2.y - b.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const minDist = b.radius + b2.radius;
+                
+                if (dist < minDist) {
+                    const overlap = minDist - dist;
+                    const angle = Math.atan2(dy, dx);
+                    
+                    // Simple resolution
+                    const force = overlap * 0.1;
+                    const fx = Math.cos(angle) * force;
+                    const fy = Math.sin(angle) * force;
+                    
+                    b.vx -= fx;
+                    b.vy -= fy;
+                    b2.vx += fx;
+                    b2.vy += fy;
+                }
+            }
         }
         
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = p.life;
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-    }
-}
+        // Draw
+        for (let b of this.balloons) {
+            ctx.beginPath();
+            
+            const vx = (Math.random() - 0.5) * b.vibrate * 5;
+            const vy = (Math.random() - 0.5) * b.vibrate * 5;
+            
+            ctx.arc(b.x + vx, b.y + vy, b.radius, 0, Math.PI * 2);
+            
+            // Balloon styling
+            const gradient = ctx.createRadialGradient(
+                b.x - b.radius * 0.3 + vx, b.y - b.radius * 0.3 + vy, b.radius * 0.1,
+                b.x + vx, b.y + vy, b.radius
+            );
+            gradient.addColorStop(0, '#ffffff');
+            gradient.addColorStop(0.3, b.color);
+            gradient.addColorStop(1, '#000000');
+            
+            ctx.fillStyle = gradient;
+            ctx.fill();
+        }
+    },
+    resize: function(w, h) {},
+    destroy: function() { this.balloons = []; }
+};
 
-// Theme 7: Floating Orbs
-function drawFloatingOrbs(ctx, cw, ch, dataArray, bufferLength) {
-    ctx.fillStyle = "rgba(10,5,15,0.3)";
-    ctx.fillRect(0, 0, cw, ch);
-    
-    const orbsCount = 10; // Few large orbs
-    const bandSize = Math.floor(bufferLength / (orbsCount * 4));
-    
-    for (let i = 0; i < orbsCount; i++) {
-        let sum = 0;
-        for (let j = 0; j < bandSize; j++) {
-            sum += dataArray[i * bandSize + j];
-        }
-        let avg = sum / bandSize;
+// Theme 3: Glow (Canvas Fluid Lines)
+themes['3'] = {
+    layer: 'canvas',
+    time: 0,
+    init: function(w, h) {
+        this.time = 0;
+    },
+    update: function(audioData, cw, ch) {
+        const ctx = dom.ctx;
         
-        let radius = avg * 0.8;
-        if(radius < 10) radius = 10;
-        
-        // Use a persistent pseudo-random position using index to keep them bounded but floating slightly
-        // We'll calculate a generic float effect using Date.now()
-        const t = Date.now() * 0.001;
-        const xOffset = Math.sin(t + i*2) * 50;
-        const yOffset = Math.cos(t * 0.8 + i*3) * 50;
-        
-        const x = cw * ((i + 1) / (orbsCount + 1)) + xOffset;
-        const y = ch / 2 + yOffset;
-        
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        
-        const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-        gradient.addColorStop(0, `hsla(${i * 30 + 100}, 100%, 70%, 0.8)`);
-        gradient.addColorStop(1, `hsla(${i * 30 + 100}, 100%, 30%, 0)`);
-        
-        ctx.fillStyle = gradient;
-        ctx.fill();
-        
-        // Glow composite
-        ctx.globalCompositeOperation = 'screen';
-        ctx.fill();
+        // Fade out
         ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = "rgba(5, 5, 10, 0.15)";
+        ctx.fillRect(0, 0, cw, ch);
+        
+        if (!isPlaying && audioData.bass === 0) {
+            this.time += 0.005; // Idle
+        } else {
+            const energy = audioData.mid / 255;
+            this.time += 0.01 + energy * 0.05;
+        }
+        
+        ctx.globalCompositeOperation = 'screen';
+        
+        const linesCount = 6;
+        const colorBase = (audioData.treble > audioData.bass * 1.5) ? 200 : 340; // Blue vs Red/Pink hue
+        const energy = audioData.mid / 255;
+        
+        for (let j = 0; j < linesCount; j++) {
+            ctx.beginPath();
+            let startY = ch / 2 + Math.sin(this.time + j) * ch * 0.3;
+            ctx.moveTo(0, startY);
+            
+            for (let i = 0; i <= cw; i += 20) {
+                const nx = i / 200 + this.time + j * 0.5;
+                const ny = Math.sin(nx) * Math.cos(nx * 0.8) * Math.sin(nx * 0.3);
+                
+                // Add audio reaction
+                const audioPulse = (audioData.bass / 255) * Math.sin(i * 0.05 + this.time * 10);
+                
+                const y = ch / 2 + (ny * ch * 0.4) + audioPulse * 150;
+                ctx.lineTo(i, y);
+            }
+            
+            ctx.lineWidth = 2 + energy * 8;
+            const hue = colorBase + j * 15 + (audioData.bass / 255) * 50;
+            ctx.strokeStyle = `hsla(${hue}, 100%, 65%, 0.8)`;
+            ctx.stroke();
+            
+            // Inner core
+            ctx.lineWidth = 1 + energy * 2;
+            ctx.strokeStyle = `hsla(${hue}, 100%, 95%, 1)`;
+            ctx.stroke();
+        }
+        
+        ctx.globalCompositeOperation = 'source-over';
+    },
+    resize: function(w, h) {},
+    destroy: function() {}
+};
+
+// Theme 4: Animal (Canvas Silhouettes)
+themes['4'] = {
+    layer: 'canvas',
+    deerY: 0,
+    birds: [],
+    grass: [],
+    init: function(w, h) {
+        this.deerY = 0;
+        this.birds = [];
+        this.grass = [];
+        for(let i=0; i<w; i+=10) {
+            this.grass.push(Math.random() * 20 + 10);
+        }
+    },
+    update: function(audioData, cw, ch) {
+        const ctx = dom.ctx;
+        ctx.fillStyle = "#1e293b"; // Dark slate background
+        ctx.fillRect(0, 0, cw, ch);
+        
+        // Ground
+        ctx.fillStyle = "#0f172a";
+        ctx.fillRect(0, ch - 80, cw, 80);
+        
+        const groundY = ch - 80;
+        const beat = audioData.bass > 200;
+        
+        // Grass
+        ctx.fillStyle = "#334155";
+        for(let i=0; i<this.grass.length; i++) {
+            const h = this.grass[i] + (audioData.mid / 255) * 10;
+            ctx.fillRect(i * 10, groundY - h, 5, h);
+        }
+        
+        // Deer Jump on beat
+        if (beat && this.deerY === 0) {
+            this.deerY = 50 + Math.random() * 50;
+        }
+        if (this.deerY > 0) {
+            this.deerY -= 4; // gravity
+            if(this.deerY < 0) this.deerY = 0;
+        }
+        
+        // Draw Deer
+        ctx.fillStyle = "#cbd5e1";
+        ctx.beginPath();
+        // simple deer shape
+        const dx = cw / 2 - 40;
+        const dy = groundY - 60 - Math.max(0, this.deerY);
+        ctx.roundRect(dx, dy, 50, 40, 10); // body
+        ctx.roundRect(dx + 35, dy - 30, 20, 30, 5); // neck/head
+        ctx.fill();
+        
+        // Birds on crescendo
+        if (audioData.treble > 180 && Math.random() > 0.8) {
+            this.birds.push({ x: 0, y: ch / 2 - 50 + Math.random() * 100, vy: -1 - Math.random() * 2 });
+        }
+        
+        ctx.fillStyle = "#94a3b8";
+        for(let i=0; i<this.birds.length; i++) {
+            let b = this.birds[i];
+            b.x += 5;
+            b.y += Math.sin(b.x * 0.1) * 2 + b.vy;
+            
+            ctx.beginPath();
+            ctx.moveTo(b.x, b.y);
+            ctx.lineTo(b.x - 10, b.y - 10 + Math.sin(b.x * 0.2) * 5);
+            ctx.lineTo(b.x - 20, b.y);
+            ctx.fill();
+            
+            if (b.x > cw) {
+                this.birds.splice(i, 1);
+                i--;
+            }
+        }
+    },
+    resize: function(w, h) {},
+    destroy: function() { this.birds = []; }
+};
+
+// Theme 5: Albums (CSS 3D)
+themes['5'] = {
+    layer: 'dom',
+    elements: [],
+    angle: 0,
+    init: function(w, h) {
+        this.angle = 0;
+        const layer = dom.layerDom;
+        layer.innerHTML = "";
+        
+        const count = 8;
+        this.elements = [];
+        
+        for(let i=0; i<count; i++) {
+            const el = document.createElement('div');
+            el.style.position = 'absolute';
+            el.style.width = '150px';
+            el.style.height = '150px';
+            el.style.backgroundImage = `url(${playlist.length > 0 ? playlist[i % playlist.length].coverURL : defaultCover})`;
+            el.style.backgroundSize = 'cover';
+            el.style.borderRadius = '8px';
+            el.style.boxShadow = '0 10px 30px rgba(0,0,0,0.5)';
+            el.style.transition = 'transform 0.1s ease-out';
+            layer.appendChild(el);
+            this.elements.push(el);
+        }
+        
+        // Center main cover
+        this.centerObj = document.createElement('div');
+        this.centerObj.style.position = 'absolute';
+        this.centerObj.style.width = '200px';
+        this.centerObj.style.height = '200px';
+        this.centerObj.style.backgroundImage = `url(${currentIndex >= 0 && playlist[currentIndex] ? playlist[currentIndex].coverURL : defaultCover})`;
+        this.centerObj.style.backgroundSize = 'cover';
+        this.centerObj.style.borderRadius = '12px';
+        this.centerObj.style.boxShadow = '0 0 50px rgba(0, 210, 255, 0.4)';
+        layer.appendChild(this.centerObj);
+    },
+    update: function(audioData, cw, ch) {
+        if (this.elements.length === 0) return;
+        
+        const moveSpeed = (audioData.bass > 150) ? 0.02 + (audioData.bass / 255) * 0.05 : 0.005;
+        this.angle += isPlaying ? moveSpeed : 0.002;
+        
+        const radius = 250 + (audioData.mid / 255) * 50;
+        
+        for(let i=0; i<this.elements.length; i++) {
+            const el = this.elements[i];
+            const theta = this.angle + (i * Math.PI * 2 / this.elements.length);
+            const x = Math.cos(theta) * radius;
+            const z = Math.sin(theta) * radius;
+            const rotateY = -theta + Math.PI/2;
+            
+            const scale = 1 + (audioData.treble / 255) * 0.2;
+            el.style.transform = `translate3d(${x}px, 0, ${z}px) rotateY(${rotateY}rad) scale(${scale})`;
+        }
+        
+        // Center pulse
+        const centerScale = 1 + (audioData.bass / 255) * 0.3;
+        const blur = (audioData.bass / 255) * 10;
+        this.centerObj.style.transform = `scale(${centerScale})`;
+        this.centerObj.style.filter = `drop-shadow(0 0 ${20 + blur * 2}px rgba(0, 210, 255, ${0.5 + audioData.bass/500}))`;
+        
+        if (currentIndex >= 0 && playlist[currentIndex]) {
+           this.centerObj.style.backgroundImage = `url(${playlist[currentIndex].coverURL})`;
+        }
+    },
+    resize: function(w, h) {},
+    destroy: function() {
+        this.elements = [];
+        this.centerObj = null;
     }
+};
+
+for(let i=6; i<=8; i++) {
+    themes[i.toString()] = {
+        layer: 'canvas',
+        init: function(w, h) {},
+        update: function(audioData, cw, ch) {
+            dom.ctx.fillStyle = "rgba(10,12,16,0.5)";
+            dom.ctx.fillRect(0, 0, cw, ch);
+            dom.ctx.fillStyle = "white";
+            dom.ctx.font = "24px Outfit";
+            dom.ctx.textAlign = "center";
+            dom.ctx.fillText(`Theme ${i} is under construction...`, cw/2, ch/2);
+        },
+        resize: function(w, h) {},
+        destroy: function() {}
+    };
 }
 
-// Theme 8: Typography
-function drawTypography(ctx, cw, ch, dataArray) {
-    ctx.fillStyle = "#e11d48";
-    ctx.fillRect(0, 0, cw, ch);
-    
-    // Get average for text scaling
-    let midAvg = 0;
-    for (let i = 20; i < 40; i++) midAvg += dataArray[i];
-    midAvg = midAvg / 20;
-    
-    const scale = 1 + (midAvg / 255) * 0.3; // Scale 1.0 to 1.3
-    
-    ctx.save();
-    ctx.translate(cw/2, ch/2);
-    ctx.scale(scale, scale);
-    
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = "white";
-    
-    // Draw background ghost layers based on bass
-    let bass = dataArray[5];
-    if (bass > 200) {
-        ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
-        const offset = (bass - 200);
-        ctx.font = `italic 900 8rem 'Outfit', sans-serif`;
-        ctx.fillText("MUSIC", -offset, -offset);
-        ctx.fillText("MUSIC", offset, offset);
-    }
-    
-    ctx.font = `900 8rem 'Outfit', sans-serif`;
-    ctx.fillStyle = "white";
-    ctx.fillText("MUSIC", 0, 0);
-    
-    ctx.font = `600 2rem 'Outfit', sans-serif`;
-    ctx.fillText(isPlaying ? "NOW PLAYING" : "PAUSED", 0, 100);
-    
-    ctx.restore();
-}
+// Theme 6: Graffiti (Canvas Splats)
+themes['6'] = {
+    layer: 'canvas',
+    splats: [],
+    dripSpeed: 0.5,
+    init: function(w, h) {
+        this.splats = [];
+        this.dripSpeed = 0.5;
+    },
+    update: function(audioData, cw, ch) {
+        const ctx = dom.ctx;
+        // Keep previous splats but fade slightly
+        ctx.fillStyle = "rgba(10, 15, 20, 0.05)";
+        ctx.fillRect(0, 0, cw, ch);
+        
+        const isSnare = audioData.treble > 150 && audioData.mid > 180;
+        const isKick = audioData.bass > 220;
+        
+        if (isKick) {
+            this.dripSpeed = 2.0; // Fast drip on kick
+        } else {
+            this.dripSpeed *= 0.95; // Decay
+            if (this.dripSpeed < 0.2) this.dripSpeed = 0.2;
+        }
+        
+        if (isSnare && Math.random() > 0.5) {
+            // New splat
+            const colors = ['#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+            const x = Math.random() * cw;
+            const y = Math.random() * (ch * 0.6);
+            const size = 20 + Math.random() * 50;
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            
+            // Core splat
+            this.splats.push({x, y, size, color, life: 1.0, type: 'core'});
+            
+            // Drips
+            for(let i=0; i<3; i++) {
+                this.splats.push({
+                    x: x + (Math.random()-0.5)*size, 
+                    y: y + (Math.random()-0.5)*size, 
+                    size: size * (0.1 + Math.random() * 0.2), 
+                    color: color, 
+                    life: 1.0, 
+                    type: 'drip'
+                });
+            }
+        }
+        
+        for (let i = 0; i < this.splats.length; i++) {
+            let s = this.splats[i];
+            
+            ctx.fillStyle = s.color;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, s.size * s.life, 0, Math.PI * 2);
+            ctx.fill();
+            
+            if (s.type === 'drip') {
+                s.y += this.dripSpeed;
+            }
+            s.life -= 0.002;
+            
+            if (s.life <= 0 || s.y > ch + s.size) {
+                this.splats.splice(i, 1);
+                i--;
+            }
+        }
+    },
+    resize: function(w, h) {},
+    destroy: function() { this.splats = []; }
+};
 
-// Boot
+// Theme 7: Ink (Metaballs with SVG Filter)
+themes['7'] = {
+    layer: 'canvas',
+    drops: [],
+    init: function(w, h) {
+        this.drops = [];
+        dom.canvas.style.filter = "url('#goo')";
+        const colors = ['#00d2ff', '#3a7bd5', '#93c5fd', '#1e40af'];
+        // Initial big blobs
+        for(let i=0; i<3; i++) {
+            this.drops.push({
+                x: w/2 + (Math.random()-0.5)*100,
+                y: h/2 + (Math.random()-0.5)*100,
+                vx: (Math.random()-0.5)*2,
+                vy: (Math.random()-0.5)*2,
+                r: 80 + Math.random()*50,
+                c: colors[i%colors.length]
+            });
+        }
+    },
+    update: function(audioData, cw, ch) {
+        const ctx = dom.ctx;
+        ctx.clearRect(0, 0, cw, ch);
+        
+        const energy = audioData.mid / 255;
+        const kick = audioData.bass > 210;
+        
+        if (kick && Math.random() > 0.5 && this.drops.length < 15) {
+            const colors = ['#00d2ff', '#3a7bd5', '#93c5fd', '#1e40af'];
+            this.drops.push({
+                x: cw/2,
+                y: ch/2,
+                vx: (Math.random()-0.5)*(10 + energy*10),
+                vy: (Math.random()-0.5)*(10 + energy*10),
+                r: 30 + Math.random()*40,
+                c: colors[Math.floor(Math.random()*colors.length)]
+            });
+        }
+        
+        for(let i=0; i<this.drops.length; i++) {
+            let d = this.drops[i];
+            
+            // apply swirling force
+            const dx = cw/2 - d.x;
+            const dy = ch/2 - d.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            // Centripetal + audio bounce
+            if(dist > 50) {
+                d.vx += (dx / dist) * 0.1;
+                d.vy += (dy / dist) * 0.1;
+            }
+            
+            // Audio expands blobs
+            const radiusScale = 1 + (audioData.bass/255) * 0.5;
+            
+            d.x += d.vx * (1 + energy*2);
+            d.y += d.vy * (1 + energy*2);
+            
+            // Damping
+            d.vx *= 0.98;
+            d.vy *= 0.98;
+            
+            ctx.fillStyle = d.c;
+            ctx.beginPath();
+            ctx.arc(d.x, d.y, d.r * radiusScale, 0, Math.PI*2);
+            ctx.fill();
+        }
+    },
+    resize: function(w, h) {},
+    destroy: function() {
+        this.drops = [];
+        dom.canvas.style.filter = "none";
+    }
+};
+
+// Theme 8: Random (Auto-Switcher)
+themes['8'] = {
+    layer: 'none', // special handling
+    timer: 0,
+    activeSubTheme: null,
+    subThemeId: '1',
+    switchInterval: 10000,
+    lastSwitch: 0,
+    init: function(w, h) {
+        this.lastSwitch = Date.now();
+        this.pickRandom();
+    },
+    pickRandom: function() {
+        if(this.activeSubTheme && this.activeSubTheme.destroy) {
+            this.activeSubTheme.destroy();
+        }
+        
+        const available = ['1', '2', '3', '4', '5', '6', '7'];
+        const choice = available[Math.floor(Math.random() * available.length)];
+        this.subThemeId = choice;
+        this.activeSubTheme = themes[choice];
+        
+        dom.canvas.style.display = 'none';
+        dom.canvasThree.style.display = 'none';
+        dom.layerDom.style.display = 'none';
+        dom.layerDom.innerHTML = '';
+        
+        if (this.activeSubTheme.layer === 'three') dom.canvasThree.style.display = 'block';
+        else if (this.activeSubTheme.layer === 'dom') dom.layerDom.style.display = 'flex';
+        else dom.canvas.style.display = 'block';
+        
+        if(this.activeSubTheme.init) {
+            const rect = dom.canvas.parentElement.getBoundingClientRect();
+            this.activeSubTheme.init(rect.width, rect.height);
+        }
+    },
+    update: function(audioData, cw, ch) {
+        const now = Date.now();
+        if (now - this.lastSwitch > this.switchInterval) {
+            if (audioData.bass > 230 || now - this.lastSwitch > 20000) {
+                this.pickRandom();
+                this.lastSwitch = now;
+            }
+        }
+        
+        if (this.activeSubTheme && this.activeSubTheme.update) {
+            this.activeSubTheme.update(audioData, cw, ch);
+        }
+    },
+    resize: function(w, h) {
+        if(this.activeSubTheme && this.activeSubTheme.resize) {
+            this.activeSubTheme.resize(w, h);
+        }
+    },
+    destroy: function() {
+        if(this.activeSubTheme && this.activeSubTheme.destroy) {
+            this.activeSubTheme.destroy();
+        }
+        this.activeSubTheme = null;
+        dom.canvas.style.display = 'none';
+        dom.canvasThree.style.display = 'none';
+        dom.layerDom.style.display = 'none';
+    }
+};
+\n// Boot
 window.addEventListener('DOMContentLoaded', init);

@@ -1,32 +1,29 @@
-# MP3ビジュアライザー タスクリスト
+# Walkman NW-Z1000 Visualizer Themes Reproduction Tasks
 
-- [ ] **Planning**
-  - [ ] 要件定義と実装計画の作成
-
-- [ ] **Execution**
-  - [ ] プロジェクトの初期設定
-    - [ ] `index.html` のベース作成
-    - [ ] `styles.css` のベースレイアウト・デザイン実装
-  - [ ] コアロジックの実装 (`app.js`)
-    - [ ] ファイルのドラッグ＆ドロップ・選択機能の実装
-    - [ ] MP3ファイルのID3メタデータ（曲名、アートワーク）解析連携
-    - [ ] プレイリストのUI連携とエラーハンドリング（読み込み失敗時）
-  - [ ] オーディオ再生機能の実装
-    - [ ] 再生・一時停止、曲送り・戻しの制御
-    - [ ] ループ再生・1曲ループ・シャッフル再生の実装
-  - [ ] ビジュアライザーの実装
-    - [ ] `AudioContext` と `AnalyserNode` のセットアップ
-    - [ ] 8種類のテーマ描画ロジック作成
-      - [ ] 1. Waveform (波形)
-      - [ ] 2. Spectrum Bars (バー)
-      - [ ] 3. Circle EQ (サークル)
-      - [ ] 4. Vinyl (アナログレコード風)
-      - [ ] 5. Cassette (カセットテープ風)
-      - [ ] 6. Particles (パーティクル)
-      - [ ] 7. Floating Orbs (オーブ)
-      - [ ] 8. Typography (テキスト演出風)
-
-- [ ] **Verification**
-  - [ ] ファイル読み込みと再生のテスト
-  - [ ] ビジュアライザーの動作確認
-  - [ ] レスポンシブUIの確認
+- [ ] 1. Preparation & Architecture Refactoring
+    - [ ] Add Three.js to [index.html](file:///c:/Users/y/Documents/GitHub/Antigravity-JS-NWZ1000-Visualizer/app/index.html).
+    - [ ] Update UI theme selector options.
+    - [ ] Refactor [app.js](file:///c:/Users/y/Documents/GitHub/Antigravity-JS-NWZ1000-Visualizer/app/app.js) to support multiple rendering contexts (Canvas2D, Three.js, CSS3D).
+    - [ ] Implement audio feature extraction (bass, mid, treble, sudden energy changes).
+- [ ] 2. Implement Theme 1: Gate
+    - [ ] Set up Three.js tunnel/particles moving Z-axis.
+    - [ ] React to bass (FOV / camera shake).
+- [ ] 3. Implement Theme 2: Balloon
+    - [ ] Canvas2D bouncing physics.
+    - [ ] React to bass (bounce) and treble (vibrate).
+- [ ] 4. Implement Theme 3: Glow
+    - [ ] Canvas2D glowing curves.
+    - [ ] Color shift based on energy.
+- [ ] 5. Implement Theme 4: Animal
+    - [ ] Canvas2D vector silhouettes.
+    - [ ] Beat-synced animations and crescendo events.
+- [ ] 6. Implement Theme 5: Albums
+    - [ ] CSS3D transforms for playlist covers.
+    - [ ] Position and pulse reacting to audio.
+- [ ] 7. Implement Theme 6: Graffiti
+    - [ ] Canvas2D splat and drip particle system.
+- [ ] 8. Implement Theme 7: Ink
+    - [ ] Canvas 2D + CSS filters for fluid metaballs.
+- [ ] 9. Implement Theme 8: Random
+    - [ ] Logic for auto-switching themes based on song structure / time.
+- [ ] 10. QA & Verification

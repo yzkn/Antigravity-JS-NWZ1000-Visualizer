@@ -1,56 +1,36 @@
-# MP3ビジュアライザー 実装計画
+# Reproducing Walkman NW-Z1000 Visualizer Themes
 
-ウォークマン NW-Z1000シリーズのビジュアライザーを再現するWebアプリケーションの実装計画です。
-
-## 目標
-- ローカルのMP3ファイルを読み込み、リスト化して再生する。
-- Web Audio APIを用いて音声データを解析し、Canvas上に8種類のビジュアライザーを描画する。
-- 再生モード（ループ、1曲ループ、シャッフル）を実装する。
-- GitHub Pagesでホスティング可能な、ビルド不要の静的サイト（HTML, CSS, Vanilla JS）として構築する。
-
-## User Review Required
-> [!NOTE]
-> NW-Z1000の完全なビジュアルの再現には当時の詳細なリソースが必要なため、機能的・視覚的に近い8つのテーマ（波形、スペクトルバー、サークルEQ、レコード風、カセット風、パーティクル、タイポグラフィ風、オーブ）を独自にCanvasで実装します。こちらの方向性でよろしいでしょうか？
+This plan details the reproduction of the 8 unique visualizer themes from the NW-Z1000 series, leveraging modern web technologies while preserving the original design and behaviors.
 
 ## Proposed Changes
 
-### フロントエンド（HTML / CSS）
-#### [NEW] index.html
-- **構造**:
-  - ヘッダーレイアウト（タイトル、テーマ切り替えセレクトボックス）
-  - メイン領域（左側にビジュアライザー用Canvas、右側にプレイリスト領域）
-  - フッター領域（再生コントロール：再生/一時停止、前/次トラック、ループ/シャッフル切替ボタン、シークバー）
-  - ドラッグ＆ドロップ用のオーバーレイUI。
+### HTML & CSS Updates
+#### [MODIFY] index.html
+- Include `Three.js` via CDN for 3D themes (Gate).
+- Update the `<select>` options to match the 8 new themes.
+- Add additional container layers inside `.visualizer-section` (e.g., `<canvas id="visualizer-three">`, `<div id="visualizer-dom">`) to support mixed rendering techniques.
+- Add SVG filter definition for the "Ink" (metaballs) theme to achieve smooth fluid merging.
 
-#### [NEW] styles.css
-- **デザイン**:
-  - ウォークマンのインターフェースを意識した、モダンで高級感のあるダークテーマ（黒背景、アクセントカラー）。
-  - フレックスボックス/グリッドを用いたレスポンシブデザイン（モバイル・PC対応）。
-  - 各種ボタンのホバーエフェクト、トランジション。
+#### [MODIFY] styles.css
+- Add layout CSS for the new containers ensuring they position absolutely over each other.
+- Add CSS variables or classes for the SVG metaball filter and CSS3D perspective.
 
-### ロジック周り（JavaScript）
-#### [NEW] app.js
-- **ファイル管理 & ID3タグ解析**:
-  - `Drag and Drop API` および `<input type="file">` を用いた音楽の読み込み。
-  - `jsmediatags` (CDN経由) を用いてMP3から曲名、アーティスト名、カバーアートを取得しエラーハンドリング。
-- **オーディオ再生 & プレイリスト**:
-  - `HTMLAudioElement` と `AudioContext` の連携。
-  - シャッフル、ループ、1曲ループの再生位置計算ロジック。
-  - 読み込みエラー時のトースト通知またはアラート表示。
-- **ビジュアライザー描画 (`AnalyserNode`)**:
-  - `requestAnimationFrame` を用いた描画ループ。
-  - 8つのテーマの切り替えロジック（テーマごとに描画関数を分ける）。
+### JavaScript Engines Refactoring
+#### [MODIFY] app.js
+- **Audio Analysis Additions:** Add a helper to extract `bass`, `mid`, `treble`, and detect `beat` drops/crescendos.
+- **Theme Architecture:** Refactor the visualizer `switch` statement into a modular approach where each theme has [init()](file:///c:/Users/y/Documents/GitHub/Antigravity-JS-NWZ1000-Visualizer/app/app.js#59-65), [update()](file:///c:/Users/y/Documents/GitHub/Antigravity-JS-NWZ1000-Visualizer/app/app.js#457-464), and `destroy()` methods. This allows clean switching between Canvas2D, Three.js, and DOM modes.
+- **Theme 1 (Gate):** Initialize Three.js scene, camera, and renderer. Create a tunnel or flying grid that accelerates, with bass modifying the camera's FOV.
+- **Theme 2 (Balloon):** 2D Canvas physics simulation (gravity, bounce, collision) of circles, pushing them up on bass spikes.
+- **Theme 3 (Glow):** 2D Canvas with `globalCompositeOperation = 'lighter'`. Draw sine wave lines whose thickness and color (red/blue) depend on energy and volume.
+- **Theme 4 (Animal):** 2D Canvas. Draw procedural/SVG-path silhouettes of a deer and terrain. Use beat detection to trigger jumps and high-energy to trigger birds flying.
+- **Theme 5 (Albums):** DOM-based CSS 3D. Create `img` elements using playlist covers and position them in 3D space with `rotateY` and `translateZ`. Pulse the `transform: scale` on bass.
+- **Theme 6 (Graffiti):** 2D Canvas. Track an array of splat objects that spawn on sharp transients and gradually increase their `y` (dripping).
+- **Theme 7 (Ink):** 2D Canvas with CSS filter (`blur` + `contrast`). Generate colorful expanding circles that mix smoothly like fluids based on frequency intensities.
+- **Theme 8 (Random):** Track time and energy peaks. At specific intervals or major beat drops, randomly select themes 1-7 and call their setup and teardown.
 
 ## Verification Plan
-
-### Manual Verification
-1. **ファイルの読み込み**:
-   - `index.html`をブラウザで開き、MP3ファイルを複数選択、または画面内にドラッグ＆ドロップする。
-   - プレイリストに正常に曲が追加され、タグ情報（タイトル等）が読まれるか確認する。
-   - 不正なファイルを入れた場合のエラーメッセージを確認する。
-2. **再生コントロール**:
-   - 再生、一時停止、曲送り、曲戻し、シークバーの移動が正常に行えるかテストする。
-   - 再生モード（全曲ループ、1曲ループ、シャッフル）の挙動を確認する。
-3. **ビジュアライザーの動作**:
-   - 音楽再生中にテーマを1〜8まで切り替え、すべて正常にアニメーションが描画されるか確認する。
-   - 画面サイズを変更した際にCanvasが適切にリサイズされるか確認する。
+### Automated & Manual Verification
+- Open [index.html](file:///c:/Users/y/Documents/GitHub/Antigravity-JS-NWZ1000-Visualizer/app/index.html) in the browser.
+- Load multiple MP3 files.
+- Play music and cycle through all 8 themes manually to check rendering overhead, visual accuracy, and audio synchronization.
+- Verify "Random" mode correctly switches themes on beat drops without memory leaks.
